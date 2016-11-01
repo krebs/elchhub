@@ -1,0 +1,3 @@
+recursive-include elchhub/templates *
+recursive-include elchhub/static *
+
