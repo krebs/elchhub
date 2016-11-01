@@ -1,6 +1,6 @@
 import requests, ftputil, ftplib, os, pprint, threading, time, random
 from flask import Flask, render_template, request
-from Crawler import FTP_Crawler
+from .Crawler import FTP_Crawler
 
 new_nodes = []
 node_list = []
