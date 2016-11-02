@@ -1,120 +1,123 @@
-import requests, ftputil, ftplib, os, pprint, threading, time, random
+import requests
 from flask import Flask, render_template, request
-from .Crawler import FTP_Crawler
+import redis
+import re
+import os
+import logging
+from hashlib import sha256
 
-new_nodes = []
-node_list = []
-content_list = []
+ttl = 300
+r = redis.StrictRedis(host='localhost', port=6379, db=0)
 
-def node_manager():
-	#Adds new nodes and removes nodes that timed out
-	global new_nodes, content_list, node_list
-	while True:
-		for (HOST, PORT, ARRIVAL) in new_nodes:
-			#Crawl this server
-			print("Starting to crawl " + HOST)
-			crawler = FTP_Crawler(HOST, PORT, content_list)
-			content_list = crawler.crawl()
-			print("Finished crawling " + HOST)
-			new_nodes.remove((HOST, PORT, ARRIVAL)) #Remove the server from the new list
-			node_list.append((HOST, PORT, ARRIVAL)) #Add the server to the known servers list
 
-		for server in node_list: 
-			if server[2]+300 <= time.time(): remove_node(server) #Remove timed out node
-			
-		time.sleep(2)
-			
-def remove_node(node):
-	global node_list, content_list
-	HOST = node[0]
-	PORT = node[1]
-	ARRIVAL = node[2]
-	
-	#Remove all content hosted by this nide
-	host_string = HOST if PORT == 21 else HOST+":"+str(PORT) #Create the base string to search for
-	for i, content in enumerate(content_list):
-		if host_string in content["nodes"]: #Server was hosting this file/folder
-			content_list[i]["nodes"].remove(host_string) #Remove us from the hosting list
-			
-	content_list = list(filter(lambda x: False if len(x["nodes"]) == 0 else True, content_list)) #Remove files served by nobody
-		
-	node_list.remove(node) #Remove the node itself
-	print("Node " + HOST + " removed due to timeout")
-	print(content_list)
-
-#Start the node manager thread
-node_manager_thread = threading.Thread(target=node_manager)
-node_manager_thread.daemon = True
-node_manager_thread.start()
+app = Flask(__name__, static_folder="static")
+log = app.logger
 
 #Start the HTTP server
-app = Flask(__name__, static_folder="static")
 @app.route("/favicon.ico")
 def return_favicon(): return ""
 
 @app.route("/api/ping", methods=["POST"])
 def register_node():
-        global node_list, new_server
-        r = request.get_json(force=True)
-        node_host = r["IP"]
-        node_port = r["PORT"]
+    """
+sar 1 3 | grep Average | awk -F " " '{print (100 - $8)"%"}'
+sar -n DEV 1 3 | grep Average |grep ppp0 | awk -F " " '{print ($6) "txkB/s"}
+{print ($5) "rxkB/s"} '
 
-        #Search for the server in the known servers
-        for i in range(0, len(node_list)):
-                if node_host == node_list[i][0] and node_port == node_list[i][1]: #We know this server already
-                        node_list[i] = (node_list[i][0], node_list[i][1], time.time())
-                        print("Server " + node_host + " is alive")
-                        return "success"
+    """
+    nodes = r.keys('nodes:*')
+    data= request.get_json(force=True)
+    host = data["IP"]
+    port = data.get("PORT","21")
+    load = data.get("load",-1)
+    cpu = data.get("cpu",-1)
+    rx = data.get("net-rx",-1)
+    tx = data.get("net-rx",-1)
 
-        #Search for the server in the uncrawled servers
-        for i in range(0, len(new_nodes)):
-                if node_host == new_nodes[i][0] and node_port == new_nodes[i][1]: #We know this server already
-                        new_nodes[i] = (new_nodes[i][0], new_nodes[i][1], time.time())
-                        print("Server " + node_host + " is alive")
-                        return "success"
+    node = host + ":" + port
+    nodekey = "nodes:"+node
+    #Search for the server in the known servers
+    if nodekey in nodes:
+        print("server {} is alive, refreshing ttl".format(node))
+        r.expire(nodekey,ttl)
+        return "refresh"
+    if r.sismember("in-progress",node):
+        print("Crawl in progress for {}".format(node))
+        return "crawl in progress"
+    else:
+        print("New node " + node)
+        r.publish("new_node",node)
+        return "new node"
 
-        #We have not found the server, add and crawl it
-        print("New node " + node_host)
-        new_nodes.append((node_host, node_port, time.time()))
-        return "success"
+
+def get_content(e):
+    data = r.hgetall(e)
+    try: data['size'] = int(data['size'])
+    except: pass
+    return data
+
+def update_content_list(hm,e,score=None):
+    """
+    if not existing, adds content to hashmap
+    if existing, adds the nodename to nodes list of content
+    """
+    data = get_content(e)
+    fullpath = os.path.join(data['path'],data["name"]).strip("/")
+    nodename = ":".join(e.split(':',2)[1:2])
+    data['nodes'] = [nodename]
+    data['fullpath'] = fullpath
+    if score is not None:
+        data['score'] = score
+    if fullpath in hm:
+        hm[fullpath]['nodes'].append(nodename)
+    else:
+        hm[fullpath] = data
 
 @app.route("/api/search", methods=["POST"])
 def search_files():
-        global node_list, content_list
-        found_content = []
-        print(request.form["searchterm"])
-        search_term = request.form["searchterm"].replace(" ", "").strip().upper()
-        if "<" in search_term or ">" in search_term or "/" in search_term: return "Nope" #XSS prevention
-        for available_content in content_list:
-                if search_term in available_content["name"].replace(" ", "").strip().upper(): found_content.append(available_content) #Append the file found
-        return render_template(
-                "listing.html", 
-                content=found_content, 
-                site_title="Search for " + request.form["searchterm"], 
-                nodecount=len(node_list)
-        )
+    from random import randint
+    nodes = list(r.scan_iter('nodes:*'))
+    found_content = {}
+    query = request.form["searchterm"]
+    searchkey = "search:query:{}".format(sha256(query)) # we use this to collect results
+    search_terms = filter(None,re.split("[\W_]",query.lower()))
+    for search_term in search_terms:
+        for val,score in r.zrevrange("search:index:{}".format(
+                re.escape(search_term)),0,1000,withscores=True):
+            r.zincrby(searchkey,val,score)
+
+    for val,score in r.zrevrange(searchkey,0,1000,withscores=True):
+        update_content_list(found_content,val,score)
+
+    return render_template(
+        "listing.html",
+        content=sorted(found_content.values(),key=lambda x:-x["score"]),
+        site_title="Search for " + query,
+        nodecount=len(nodes)
+    )
 
 @app.route("/", defaults={"path": ""}, methods=["GET"])
 @app.route("/<path:path>", methods=["GET"])
 def catch_all(path):
-        global node_list, content_list
-        folder_content = []
-        path = "/" + path #Add a leading slash to the path requested
-        if path[-1] == "/": path = path[:-1] #Remove a possible trailing slash
-        print(path)
-        for available_content in content_list:
-                if available_content["path"] == path:
-                        random.shuffle(available_content["nodes"]) #Shuffle the source list (Load Distribution)
-                        print("Attaching " + str(available_content))
-                        folder_content.append(available_content)
+    nodes = r.keys('nodes:*')
+    import re
+    folder_content = {}
+    path = path.strip('/')
+    print(path)
+    key = sha256(path).hexdigest()
 
-        print("Files in " + path + ": " + str(folder_content))
-        return render_template(
-                "listing.html", 
-                content=folder_content, 
-                site_title="Listing of " + path if path!="" else "Welcome to elchOS (" + str(len(node_list)) + " nodes)", 
-                nodecount=len(node_list)
-        )
+    for k in r.scan_iter(match='dir:*:{}'.format(key)):
+        for e in r.smembers(k):
+            update_content_list(folder_content,e)
+
+    folder_content = folder_content.values()
+    print("Files in " + path + ": " + str(folder_content))
+    return render_template(
+            "listing.html",
+            content=sorted(folder_content),
+            site_title="Listing of " + path if path!="" else "Welcome to elchOS (" + str(len(nodes)) + " nodes)",
+            nodecount=len(nodes)
+    )
 
 if __name__ == '__main__':
     app.run(debug=True)
