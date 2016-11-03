@@ -26,11 +26,16 @@ def recreate_index():
         # add index for keywords in name:
         for token in filter(None,
                 set(re.split("[\W_]",r.hget(k,"name").lower()))):
-            r.zadd("search:index:" + token,5,k)
+            # folders value more than files
+            r.zadd("search:index:" + token,20 if r.hget(k,"type") == "folder" else 10,k)
         # add index for keywords in path
-        for token in filter(None,
-                set(re.split("[\W_]",r.hget(k,"path").lower()))):
-            r.zincrby("search:index:" + token,k,1)
+
+        pathlist = r.hget(k,"path").lower().split("/")
+        for idx,directory in enumerate(reversed(pathlist)):
+            for token in filter(None,set(re.split("[\W_]",directory))):
+                # TODO: use 10 - (len()-index())  as increment to 
+                score = 9 - idx if idx < 9 else 1
+                r.zincrby("search:index:" + token,k,score)
 
 
 for msg in pubsub.listen():
@@ -66,8 +71,8 @@ for msg in pubsub.listen():
         # 300 seconds expiration
         nodeid = 'nodes:{}'.format(node)
         from time import time
-        r.hmset(nodeid,{"created":time.now())
-        r.ttl(nodeid,300)
+        r.hset(nodeid,"created",time())
+        r.expire(nodeid,300)
         recreate_index()
         r.srem("in-progress",node)
 
