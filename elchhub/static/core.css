@@ -1,0 +1,16 @@
+#iconsearch {
+float:right;
+margin: 50px;
+}
+#elchos-img {
+  height:200px;
+}
+.list-img {
+    height: 20px;
+}
+.small-path {
+  font-size: 0.7em;
+  color: grey;
+  text-decoration: none;
+  margin-left: 20px;
+};
