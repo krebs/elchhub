@@ -1,85 +1,131 @@
 #!/usr/bin/env python
 
 from Crawler import FTP_Crawler
+import minibar
 import redis
+import logging
+logging.basicConfig(level=logging.DEBUG)
+log = logging.getLogger('elch-manager')
 
-r = redis.StrictRedis(host='localhost', port=6379, db=0)
+r = redis.StrictRedis(host='localhost', port=6379, db=0,decode_responses=True)
 pubsub = r.pubsub()
 r.config_set('notify-keyspace-events','KEA')
-#pubsub.psubscribe('__keyspace@*__:expired')
+minibar_tpl = "{i}/{total} {bar} {elapsed}s {eta}"
+
 #pubsub.psubscribe('*')
 pubsub.subscribe('__keyevent@0__:expired')
 pubsub.subscribe('new_node')
+pubsub.subscribe('delete_node')
 pubsub.subscribe('update_node')
 
+def cleanup_search_index():
+    log.info("search index cleanup")
+    for k in r.scan_iter(match="search:index:*") :
+        r.delete(k)
+    for k in r.scan_iter("search:query:*"): #invalidate previous searches
+        r.delete(k)
+
 def recreate_index():
+    # TODO: lock if index is currently being recreated
     import re
     # cleanup index
-    print("index cleanup")
-    for k in r.scan_iter(match="search:index:*"):
-        r.delete(k)
-    for k in r.scan_iter(match="store:*"):
+
+    # TODO: do the cleanup when a host gets removed, not clean up the whole thing
+    cleanup_search_index()
+    log.info("starting index recreation")
+    store_size = len(list(r.scan_iter(match="store:*")))
+    pipe = r.pipeline()
+    for idx,k in enumerate(r.scan_iter(match="store:*")):
+        v = r.hgetall(k)
+        if idx % 1000 == 0: log.info("{} of {}".format(idx,store_size))
+        if idx % 10000 == 0:
+            log.info("executing pipeline")
+            pipe.execute()
+
         # TODO tokenize with nltk instead of this
-        # todo: remove stopwords
-        print("index for {}".format(k))
+        # TODO: remove stopwords
 
-        # add index for keywords in name:
+        # add index for keywords in name
         for token in filter(None,
-                set(re.split("[\W_]",r.hget(k,"name").lower()))):
-            # folders value more than files
-            r.zadd("search:index:" + token,20 if r.hget(k,"type") == "folder" else 10,k)
-        # add index for keywords in path
+                set(re.split("[\W_]",v["name"].lower()))):
+            # folders value more than files if they match the token
+            pipe.zadd("search:index:" + token,20 if v["type"] == "folder" else 10,k)
 
-        pathlist = r.hget(k,"path").lower().split("/")
+        # add index for keywords in path
+        pathlist = v["path"].lower().split("/")
         for idx,directory in enumerate(reversed(pathlist)):
             for token in filter(None,set(re.split("[\W_]",directory))):
-                # TODO: use 10 - (len()-index())  as increment to 
                 score = 9 - idx if idx < 9 else 1
-                r.zincrby("search:index:" + token,k,score)
+                pipe.zincrby("search:index:" + token,k,score)
+    pipe.execute()
 
-
+log.info("ready for receiving messages")
 for msg in pubsub.listen():
-    print(msg)
+    log.debug(msg)
     if msg['type'] == 'subscribe':continue
     node = msg['data']
-    if msg['channel'] == 'update_node':
-        print('extend ttl for {}'.format(node))
+    channel = msg['channel']
+    if channel == 'update_node':
+        log.info('extend ttl for {}'.format(node))
         r.expire("nodes:{}".format(node),300)
-    if msg['channel'] == 'new_node':
+    if channel == 'new_node':
         #Crawl this server
-        print("Starting to crawl " + node)
+        log.info("Starting to crawl " + node)
         HOST,PORT = node.split(':')
         r.sadd("in-progress",node)
-        crawler = FTP_Crawler(HOST, PORT)
+        crawler = FTP_Crawler(HOST, int(PORT))
         content_list = crawler.crawl()
-        for item in content_list:
-            from hashlib import sha256
-            # path never has either leading or trailing slashes
-            try:
-                print("path: {}".format(item['path']))
-                print("name: {}".format(item['name']))
-            except: pass
-            k = "store:{}:{}".format(node,
-                                  sha256(item['path']+item['name']).hexdigest())
-            dirkey = "dir:{}:{}".format(node,sha256(item['path']).hexdigest())
-            r.sadd(dirkey,k) # link to original folder
-            r.hmset(k,item)
-            if item['type'] == 'folder':
-                r.hset(k,"dirlink",k.replace('store:','dir:'))
 
-        print("Finished crawling " + HOST)
-        # 300 seconds expiration
+        from hashlib import sha256
+        pipe = r.pipeline()
+        content_size = len(content_list)
+        for idx,item in enumerate(content_list):
+            if idx % 1000 == 0:
+                log.info("{} of {}".format(idx,content_size))
+            if idx % 10000 == 0:
+                log.info("executing pipeline")
+                pipe.execute()
+            p = item['path'].encode()
+            fp = p+item['name'].encode()
+            k = "store:{}".format(sha256(fp).hexdigest())
+            dirkey = "dirlink:{}".format(sha256(p).hexdigest())
+            hostkey = "hostlink:{}".format(node)
+            hostrevkey = k.replace("store:","hostrevlink:")
+            item['dirlink'] = dirkey
+            pipe.sadd(dirkey,k)     # link to original folder
+            pipe.sadd(hostkey,k)    # link file to host
+            pipe.sadd(hostrevkey,node) # link host to file
+            pipe.hmset(k,item)
+
+        pipe.execute()
+        log.info("Finished crawling {}".format(HOST))
         nodeid = 'nodes:{}'.format(node)
         from time import time
-        r.hset(nodeid,"created",time())
-        r.expire(nodeid,300)
+        log.info("Starting indexing")
         recreate_index()
+        log.info("finished indexing")
+        r.hset(nodeid,"created",time())
+        r.sadd("node-index",node)
+        # 300 seconds expiration
+        r.expire(nodeid,300)
         r.srem("in-progress",node)
 
-    if msg['channel'] == '__keyevent@0__:expired':
-        node = node.split(':',1)[1] # nodes/ip:port
-        print("delete files for node {}".format(node))
-        for k in r.keys('dir:{}:*'.format(node)) + r.keys('store:{}:*'.format(node)):
-            print("delete {}".format(k))
-            r.delete(k)
+    if channel == '__keyevent@0__:expired' or channel == "delete_node":
+        node = node.split(':',1)[1] # nodes:ip:port
+        log.info("delete files for node {}".format(node))
+        hkey = 'hostlink:{}'.format(node)
+        nkey = 'nodes:{}'.format(node)
+        for k in r.sscan_iter(hkey):
+            log.debug("delete {}".format(k))
+            hostrevkey = k.replace("store:","hostrevlink:")
+            dirlink = r.hget(k,"dirlink")
+            log.debug("removing {} from {}".format(k,hostrevkey))
+            r.srem(hostrevkey,node)
+            if len(r.smembers(hostrevkey)) == 0:
+                log.debug("availablity to 0 again, cleaning up dirlink")
+                r.srem(dirlink,k)
+                r.delete(k)
+        r.delete(hkey)
+        r.delete(nkey)
+        r.srem("node-index",node)
         recreate_index()

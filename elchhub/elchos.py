@@ -7,7 +7,7 @@ import logging
 from hashlib import sha256
 
 ttl = 300
-r = redis.StrictRedis(host='localhost', port=6379, db=0)
+r = redis.StrictRedis(host='localhost', port=6379, db=0,decode_responses=True)
 
 
 app = Flask(__name__, static_folder="static")
@@ -25,7 +25,7 @@ sar -n DEV 1 3 | grep Average |grep ppp0 | awk -F " " '{print ($6) "txkB/s"}
 {print ($5) "rxkB/s"} '
 
     """
-    nodes = r.keys('nodes:*')
+    nodes = r.smembers('node-index')
     data= request.get_json(force=True)
     host = data["IP"]
     port = data.get("PORT","21")
@@ -52,6 +52,7 @@ sar -n DEV 1 3 | grep Average |grep ppp0 | awk -F " " '{print ($6) "txkB/s"}
 
 def get_content(e):
     data = r.hgetall(e)
+
     try: data['size'] = int(data['size'])
     except: pass
     return data
@@ -61,30 +62,36 @@ def update_content_list(hm,e,score=None):
     if not existing, adds content to hashmap
     if existing, adds the nodename to nodes list of content
     """
+    hostkey = e.replace("store:","hostrevlink:")
     data = get_content(e)
     fullpath = os.path.join(data['path'],data["name"]).strip("/")
-    nodename = ":".join(e.split(':',2)[1:2])
-    data['nodes'] = [nodename]
+    # import pdb;pdb.set_trace()
+    data['nodes'] = list(r.smembers(hostkey))
+    # log.debug(data)
     data['fullpath'] = fullpath
     if score is not None:
         data['score'] = score
-    if fullpath in hm:
-        hm[fullpath]['nodes'].append(nodename)
-    else:
-        hm[fullpath] = data
+    hm[fullpath] = data
 
 @app.route("/api/search", methods=["POST"])
 def search_files():
     from random import randint
-    nodes = list(r.scan_iter('nodes:*'))
+    num_nodes = r.scard('node-index')
     found_content = {}
     query = request.form["searchterm"]
-    searchkey = "search:query:{}".format(sha256(query)) # we use this to collect results
-    search_terms = filter(None,re.split("[\W_]",query.lower()))
-    for search_term in search_terms:
-        for val,score in r.zrevrange("search:index:{}".format(
-                re.escape(search_term)),0,1000,withscores=True):
-            r.zincrby(searchkey,val,score)
+    # use the normalized search terms
+    search_terms = sorted(filter(None,re.split("[\W_]",query.lower())))
+    searchkey = "search:query:{}".format(sha256(str(search_terms).encode()).hexdigest()) # we use this to collect results
+
+    if r.zcard(searchkey) != 0:
+        print("Found previous search for query {},normalized {} ({})".format(
+                    query,search_terms,searchkey))
+    else: # start the search
+        print("Starting new search for query {}, normalized {}".format(query,search_terms))
+        for search_term in search_terms:
+            for val,score in r.zrevrange("search:index:{}".format(
+                    re.escape(search_term)),0,1000,withscores=True):
+                r.zincrby(searchkey,val,score)
 
     for val,score in r.zrevrange(searchkey,0,1000,withscores=True):
         update_content_list(found_content,val,score)
@@ -93,30 +100,33 @@ def search_files():
         "listing.html",
         content=sorted(found_content.values(),key=lambda x:-x["score"]),
         site_title="Search for " + query,
-        nodecount=len(nodes)
+        nodecount=num_nodes
     )
 
 @app.route("/", defaults={"path": ""}, methods=["GET"])
 @app.route("/<path:path>", methods=["GET"])
 def catch_all(path):
-    nodes = r.keys('nodes:*')
+    # TODO: check if it would be worth creating a separate nodes index
+    num_nodes = r.scard('node-index')
     import re
     folder_content = {}
     path = path.strip('/')
     print(path)
-    key = sha256(path).hexdigest()
+    key = sha256(path.encode()).hexdigest()
 
-    for k in r.scan_iter(match='dir:*:{}'.format(key)):
-        for e in r.smembers(k):
-            update_content_list(folder_content,e)
+    # DIRLISTING via dirlink:
+    dirkey = "dirlink:"+ key
+    for e in r.smembers(dirkey):
+        update_content_list(folder_content,e)
 
     folder_content = folder_content.values()
-    print("Files in " + path + ": " + str(folder_content))
+    log.debug("Files in " + path + ": " + str(folder_content))
     return render_template(
             "listing.html",
-            content=sorted(folder_content),
-            site_title="Listing of " + path if path!="" else "Welcome to elchOS (" + str(len(nodes)) + " nodes)",
-            nodecount=len(nodes)
+            content=sorted(folder_content,
+                key=lambda x: x['fullpath'].lower()),
+            site_title="Listing of " + path if path!="" else "Welcome to elchOS (" + str(num_nodes) + " nodes)",
+            nodecount=num_nodes
     )
 
 if __name__ == '__main__':
