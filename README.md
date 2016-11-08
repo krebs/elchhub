@@ -26,12 +26,20 @@ firefox localhost:5000
 # a host registers itself at the elchHub:
 curl localhost:5000/api/ping -H "Content-Type: application/json" -X POST -d '{"IP":"10.42.22.173","PORT":"2121"}'
 ```
+### FTP Servers
+
+If FTP Servers provide an index of their files this index will be used:
+```
+# in FTP ROOT
+find -printf "%s %y %p\n" | xz -9 > index.xz
+```
 
 ## Hardware
 Right now elchOS uses the **Seagate GoFlex Net** but every NAS with an ftp and
 a tiny bit of shell script can be used.
 
 For the GoFlex Net source code please refer to https://github.com/krebscode/elchos
+
 
 ## License
 MIT
