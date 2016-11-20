@@ -15,6 +15,11 @@ setup(
         'requests>=2',
         'ftputil'
     ],
+    entry_points = {
+        'console_scripts': [
+                'elch-manager = elchhub.elch_manager:main',
+            ],
+        },
     author_email="spam@krebsco.de",
     url="http://github.com/krebscode/elchhub"
 )
