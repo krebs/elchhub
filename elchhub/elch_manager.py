@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 from .Crawler import FTP_Crawler
-import minibar
 import redis
 import logging
 logging.basicConfig(level=logging.DEBUG)
@@ -11,7 +10,6 @@ def main():
     r = redis.StrictRedis(host='localhost', port=6379, db=0,decode_responses=True)
     pubsub = r.pubsub()
     r.config_set('notify-keyspace-events','KEA')
-    minibar_tpl = "{i}/{total} {bar} {elapsed}s {eta}"
 
     #pubsub.psubscribe('*')
     pubsub.subscribe('__keyevent@0__:expired')
