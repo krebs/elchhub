@@ -1,9 +1,9 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-from elchos import app as application
+from elchhub.elchos import app
 
-application.config['PROPAGATE_EXCEPTIONS'] = True
+app.config['PROPAGATE_EXCEPTIONS'] = True
 
 if __name__ == '__main__':
-    application.run(debug=False)
+    app.run(debug=False)
