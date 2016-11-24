@@ -72,8 +72,14 @@ def main():
             log.info("Starting to crawl " + node)
             HOST,PORT = node.split(':')
             r.sadd("in-progress",node)
-            crawler = FTP_Crawler(HOST, int(PORT))
-            content_list = crawler.crawl()
+            try:
+                crawler = FTP_Crawler(HOST, int(PORT))
+                content_list = crawler.crawl()
+            except Exception as e:
+                log.error("Crawling {} failed hard")
+                log.error(e)
+                r.srem("in-progress",node)
+                continue
 
             from hashlib import sha256
             pipe = r.pipeline()
