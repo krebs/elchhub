@@ -3,6 +3,7 @@
 
 from elchos import app as application
 
+application.config['PROPAGATE_EXCEPTIONS'] = True
 
 if __name__ == '__main__':
-    application.run(debug=True)
+    application.run(debug=False)
