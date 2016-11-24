@@ -76,8 +76,8 @@ def main():
                 crawler = FTP_Crawler(HOST, int(PORT))
                 content_list = crawler.crawl()
             except Exception as e:
-                log.error("Crawling {} failed hard")
-                log.error(e)
+                log.error("Crawling {} failed hard".format(node))
+                log.error("Reason: {}".format(e))
                 r.srem("in-progress",node)
                 continue
 
