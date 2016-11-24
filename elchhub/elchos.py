@@ -38,7 +38,7 @@ sar -n DEV 1 3 | grep Average |grep ppp0 | awk -F " " '{print ($6) "txkB/s"}
     node = host + ":" + port
     nodekey = "nodes:"+node
     #Search for the server in the known servers
-    if nodekey in nodes:
+    if node in nodes:
         print("server {} is alive, refreshing ttl".format(node))
         r.expire(nodekey,ttl)
         return "refresh"
