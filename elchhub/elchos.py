@@ -18,7 +18,7 @@ log = app.logger
 @app.route("/favicon.ico")
 def return_favicon(): return ""
 
-@app.route("/api/<node>",methods=["DELETE"])
+@app.route("/api/node/<node>",methods=["DELETE"])
 def unregister_node(node):
     if request.headers.getlist("X-Forwarded-For"):
         ip = request.headers.getlist("X-Forwarded-For")[0]
