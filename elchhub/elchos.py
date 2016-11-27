@@ -18,6 +18,29 @@ log = app.logger
 @app.route("/favicon.ico")
 def return_favicon(): return ""
 
+@app.route("/api/<node>",methods=["DELETE"])
+def unregister_node(node):
+    if request.headers.getlist("X-Forwarded-For"):
+        ip = request.headers.getlist("X-Forwarded-For")[0]
+    else:
+        ip = request.remote_addr
+
+    nodes = r.smembers('node-index')
+    nodekey = "nodes:"+node
+    if node in nodes:
+        if node.startswith(ip+":"):
+            # expire node immediately
+            r.expire(nodekey,1)
+            return "ok"
+        else:
+            return "unauthorized",401
+    elif r.sismember("in-progress",node):
+        print("crawl in progress for {}".format(node))
+        return "crawl in progress, stay tuned",420
+    else:
+        print("cannot remove unknown node {}".format(node))
+        return "unknown node",404
+
 @app.route("/api/ping", methods=["POST"])
 def register_node():
     """
