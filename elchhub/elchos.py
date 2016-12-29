@@ -60,6 +60,7 @@ sar -n DEV 1 3 | grep Average |grep ppp0 | awk -F " " '{print ($6) "txkB/s"}
     #Search for the server in the known servers
     if node in nodes:
         print("server {} is alive, refreshing ttl".format(node))
+        r.hmset(nodekey, data)
         r.expire(nodekey,ttl)
         return "refresh"
     if r.sismember("in-progress",node):
