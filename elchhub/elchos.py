@@ -101,6 +101,7 @@ def update_content_list(hm,e,score=None):
 def search_files():
     from random import randint
     num_nodes = r.scard('node-index')
+    allhosts = {n.replace("nodes:",""): r.hgetall(n) for n in r.keys("nodes:*")}
     found_content = {}
     query = request.form["searchterm"]
     # use the normalized search terms
@@ -124,7 +125,8 @@ def search_files():
         "listing.html",
         content=sorted(found_content.values(),key=lambda x:-x["score"]),
         site_title="Search for " + query,
-        nodecount=num_nodes
+        nodecount=num_nodes,
+            allhosts=allhosts
     )
 
 @app.route("/", defaults={"path": ""}, methods=["GET"])
