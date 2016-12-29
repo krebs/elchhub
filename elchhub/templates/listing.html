@@ -9,7 +9,9 @@
   <ul id="all-hosts">
     {% for host in allhosts.values() %}
       <li>
-        <a class=hostlink href="ftp://anonymous@{{ host["ip"]+ "/" }}">{{host["name"]}}</a>
+        <a class=hostlink href="ftp://anonymous@{{ host["ip"]+":"+host["port"] + "/" }}">
+          {{host["name"]}} (tx:{{host["net-tx"]|default(0)|int}},cpu:{{host['cpu']|default(0)|int}},port:{{host['port']}})
+        </a>
       </li>
     {% endfor %}
   </ul>

@@ -51,10 +51,9 @@ sar -n DEV 1 3 | grep Average |grep ppp0 | awk -F " " '{print ($6) "txkB/s"}
     """
     nodes = r.smembers('node-index')
     data= request.get_json(force=True)
-    host = data["IP"]
-    port = data["PORT"]
+    host = data["ip"]
+    port = data.get("port","21")
     node = host + ":" + port
-    port = data.get("PORT","21")
 
 
     nodekey = "nodes:"+node
