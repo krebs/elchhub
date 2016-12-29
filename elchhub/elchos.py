@@ -52,13 +52,11 @@ sar -n DEV 1 3 | grep Average |grep ppp0 | awk -F " " '{print ($6) "txkB/s"}
     nodes = r.smembers('node-index')
     data= request.get_json(force=True)
     host = data["IP"]
-    port = data.get("PORT","21")
-    load = data.get("load",-1)
-    cpu = data.get("cpu",-1)
-    rx = data.get("net-rx",-1)
-    tx = data.get("net-rx",-1)
-
+    port = data["PORT"]
     node = host + ":" + port
+    port = data.get("PORT","21")
+
+
     nodekey = "nodes:"+node
     #Search for the server in the known servers
     if node in nodes:
@@ -71,6 +69,8 @@ sar -n DEV 1 3 | grep Average |grep ppp0 | awk -F " " '{print ($6) "txkB/s"}
     else:
         print("New node " + node)
         r.publish("new_node",node)
+        # TODO do not directly set here
+        r.hmset(nodekey, data)
         return "new node"
 
 
@@ -132,6 +132,9 @@ def search_files():
 def catch_all(path):
     # TODO: check if it would be worth creating a separate nodes index
     num_nodes = r.scard('node-index')
+    allnodeids = r.smembers('node-index')
+    allhosts = {n.replace("nodes:",""): r.hgetall(n) for n in r.keys("nodes:*")}
+    print("all Hosts:" + str(allhosts))
     import re
     folder_content = {}
     path = path.strip('/')
@@ -150,7 +153,8 @@ def catch_all(path):
             content=sorted(folder_content,
                 key=lambda x: x['fullpath'].lower()),
             site_title="Listing of " + path if path!="" else "Welcome to elchOS (" + str(num_nodes) + " nodes)",
-            nodecount=num_nodes
+            nodecount=num_nodes,
+            allhosts=allhosts
     )
 
 if __name__ == '__main__':

@@ -79,6 +79,7 @@ def main():
                 log.error("Crawling {} failed hard".format(node))
                 log.error("Reason: {}".format(e))
                 r.srem("in-progress",node)
+                r.delete("nodes:"+node)
                 continue
 
             from hashlib import sha256
@@ -110,6 +111,8 @@ def main():
             recreate_index()
             log.info("finished indexing")
             r.hset(nodeid,"created",time())
+            r.hset(nodeid,"ip",HOST)
+            r.hset(nodeid,"port",PORT)
             r.sadd("node-index",node)
             # 300 seconds expiration
             r.expire(nodeid,300)

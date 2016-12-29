@@ -3,19 +3,29 @@
 <title>elchOS</title>
 <link rel="stylesheet" href="/static/core.css">
 </head>
-<div id="iconsearch" >
+<div id="icon" >
   <img id="elchos-img" src="/static/icons/elchos.png"><br>
-  <form action="/api/search", method="post">
-    <input name="searchterm" placeholder="Search for files"></input>
-  </form>
+  <h3>Host Listing<h3>
+  <ul id="all-hosts">
+    {% for host in allhosts.values() %}
+      <li>
+        <a class=hostlink href="ftp://anonymous@{{ host["ip"]+ "/" }}">{{host["name"]}}</a>
+      </li>
+    {% endfor %}
+  </ul>
 </div>
 <div class=page>
   <h1>{{ site_title }}</h1>
+  <div id="search" >
+    <form action="/api/search", method="post"  >
+      <input name="searchterm"  id="searchform" placeholder="Search for files"></input>
+    </form>
+  </div>
   <table>
     <thead>
       <tr>
         <th></th>
-        <th>Filename</th>
+        <th id="filename">Filename</th>
         <th>Size</th>
         <th>Nodes</th>
       </tr>
@@ -48,8 +58,7 @@
           <td>
             {% for node in link["nodes"] %}
             <a href="ftp://anonymous@{{ node + "/" + link["fullpath"]}}">
-              {{node}}
-            </a></br>
+              {{allhosts[node]["name"]}}</a><span></span>
             {% endfor %}
           </td>
           {% endif %}
@@ -67,8 +76,7 @@
           <td></td><td>
             {% for node in link["nodes"] %}
             <a href="ftp://anonymous@{{ node + "/" + link["fullpath"]}}">
-              {{node}}
-            </a></br>
+              {{allhosts[node]["name"]}}</a><span></span>
             {% endfor %}
           </td>
           {% endif %}

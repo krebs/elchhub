@@ -1,6 +1,27 @@
-#iconsearch {
-float:right;
+
+#icon {
+float: right;
 margin: 50px;
+}
+#all-hosts {
+  list-style: none;
+
+}
+.hostlink {
+}
+#search {
+}
+#searchform {
+  width: 50%;
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+  margin-top: 5px;
+  margin-bottom: 50px;
+  font-size: x-large;
+}
+#filename {
+  min-width: 400px;
 }
 #elchos-img {
   height:200px;
